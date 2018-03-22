@@ -249,7 +249,6 @@ func TestValueGC3(t *testing.T) {
 	}
 
 	txn = kv.NewTransaction(true)
-	defer txn.Discard()
 	it := txn.NewIterator(itOpt)
 	defer it.Close()
 	// Walk a few keys
@@ -544,96 +543,30 @@ func TestValueLogGC(t *testing.T) {
 	opt.ValueLogFileSize = 15 << 20
 	runBadgerTest(t, &opt, func(t *testing.T, kv *DB) {
 		sz := 32 << 10
-		v := make([]byte, sz)
 		for j := 0; j < 40; j++ {
 			err := kv.Update(func(txn *Txn) error {
 				for i := 0; i < 45; i++ {
+					v := make([]byte, sz)
 					rand.Read(v[:rand.Intn(sz)])
 					require.NoError(t, txn.Set([]byte(fmt.Sprintf("key%d", i)), v))
 				}
-				require.NoError(t, txn.Set([]byte(fmt.Sprintf("keya%d", j)), v))
 				return nil
 			})
 			require.NoError(t, err)
 		}
 		fids := kv.vlog.sortedFids()
-		require.Equal(t, len(fids), 4)
-		require.NoError(t, kv.PurgeOlderVersions())
-		require.NoError(t, kv.RunValueLogGC(0.3))
-		for i := 0; i < 4; i++ {
-			// Check that  no vlog is deleted.
-			_, err := os.Stat(fmt.Sprintf("%s%c%06d.vlog", dir, os.PathSeparator, i))
-			require.NoError(t, err)
-			kv.vlog.filesLock.RLock()
-			lf := kv.vlog.filesMap[uint32(i)]
-			kv.vlog.filesLock.RUnlock()
-			// Ensure iteration doesn't return in any error.
-			kv.vlog.iterate(lf, 0, func(e Entry, vp valuePointer) error {
-				return nil
-			})
-		}
-		err = kv.View(func(txn *Txn) error {
-			it := txn.NewIterator(DefaultIteratorOptions)
-			defer it.Close()
-			count := 0
-			for it.Rewind(); it.Valid(); it.Next() {
-				count++
-			}
-			require.Equal(t, count, 85)
-			return nil
-		})
-		require.NoError(t, err)
-
-		// Delete some entries and punch hole second time.
-		for j := 0; j < 40; j += 2 {
-			err := kv.Update(func(txn *Txn) error {
-				require.NoError(t, txn.Delete([]byte(fmt.Sprintf("keya%d", j))))
-				return nil
-			})
-			require.NoError(t, err)
-		}
 		require.NoError(t, kv.PurgeOlderVersions())
 		require.NoError(t, kv.RunValueLogGC(0.3))
 		newFids := kv.vlog.sortedFids()
-		require.Equal(t, len(newFids), 4)
-		for i := 0; i < 4; i++ {
-			_, err = os.Stat(fmt.Sprintf("%s%c%06d.vlog", dir, os.PathSeparator, i))
-			require.NoError(t, err)
-			kv.vlog.filesLock.RLock()
-			lf := kv.vlog.filesMap[uint32(i)]
-			kv.vlog.filesLock.RUnlock()
-			// Ensure iteration doesn't return in any error.
-			kv.vlog.iterate(lf, 0, func(e Entry, vp valuePointer) error {
-				return nil
-			})
-		}
-		err = kv.View(func(txn *Txn) error {
-			it := txn.NewIterator(DefaultIteratorOptions)
-			defer it.Close()
-			count := 0
-			for it.Rewind(); it.Valid(); it.Next() {
-				count++
+		// No. of value log files after GC should be less than before.
+		// We should have GC-ed more than one value log file.
+		require.True(t, (len(fids)-len(newFids)) > 2)
+		for i, fid := range fids {
+			if i < len(newFids) && newFids[i] == fid {
+				continue
 			}
-			require.Equal(t, count, 65)
-			return nil
-		})
-		require.NoError(t, err)
-
-		// Delete some entries so that only one vlog remains
-		for j := 1; j < 40; j += 2 {
-			err := kv.Update(func(txn *Txn) error {
-				require.NoError(t, txn.Delete([]byte(fmt.Sprintf("keya%d", j))))
-				return nil
-			})
-			require.NoError(t, err)
-		}
-		require.NoError(t, kv.PurgeOlderVersions())
-		require.NoError(t, kv.RunValueLogGC(0.3))
-		newFids = kv.vlog.sortedFids()
-		require.Equal(t, len(newFids), 1)
-		for i := 0; i < 3; i++ {
 			// Check that vlog is deleted.
-			_, err = os.Stat(fmt.Sprintf("%s%c%06d.vlog", dir, os.PathSeparator, i))
+			_, err = os.Stat(fmt.Sprintf("dir%c%06d.vlog", os.PathSeparator, fid))
 			require.Error(t, err)
 		}
 		err = kv.View(func(txn *Txn) error {

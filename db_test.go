@@ -913,19 +913,7 @@ func TestPurgeVersionsBelow(t *testing.T) {
 		// Delete all versions below the 3rd version
 		err := db.PurgeVersionsBelow([]byte("answer"), ts)
 		require.NoError(t, err)
-		// Since GC stats is updated in background, add a sleep
-		time.Sleep(10 * time.Millisecond)
-		db.vlog.lfDiscardStats.Lock()
 		require.NotEmpty(t, db.vlog.lfDiscardStats.m)
-		db.vlog.lfDiscardStats.Unlock()
-		defer func() {
-			minHoleLen = 1 << 20
-		}()
-		lf := db.vlog.filesMap[0]
-		// Hack way to punch  holes in last file.
-		db.vlog.maxFid = 1
-		minHoleLen = 1
-		require.NoError(t, db.vlog.rewrite(lf))
 
 		// Verify that there are 4 versions, and versions
 		// below ts have been purged.
@@ -1020,79 +1008,6 @@ func TestPurgeVersionsBelow2(t *testing.T) {
 			require.Equal(t, 2, count)
 			return nil
 		})
-	})
-}
-
-func TestPurgeOlderVersions1(t *testing.T) {
-	runBadgerTest(t, nil, func(t *testing.T, db *DB) {
-		// Write two versions of a key
-		v1 := make([]byte, 1000) // should go to value log
-		rand.Read(v1)
-		v2 := make([]byte, 1000) // should go to value log
-		rand.Read(v2)
-		err := db.Update(func(txn *Txn) error {
-			return txn.Set([]byte("answer"), v1)
-		})
-		require.NoError(t, err)
-
-		err = db.Update(func(txn *Txn) error {
-			return txn.Set([]byte("answer"), v2)
-		})
-		require.NoError(t, err)
-
-		opts := DefaultIteratorOptions
-		opts.AllVersions = true
-		opts.PrefetchValues = false
-
-		// Verify that two versions are found during iteration
-		err = db.View(func(txn *Txn) error {
-			it := txn.NewIterator(opts)
-			var count int
-			for it.Rewind(); it.Valid(); it.Next() {
-				count++
-				item := it.Item()
-				require.Equal(t, []byte("answer"), item.Key())
-			}
-			require.Equal(t, 2, count)
-			return nil
-		})
-		require.NoError(t, err)
-
-		// Invoke DeleteOlderVersions() to delete older version
-		err = db.PurgeOlderVersions()
-		require.NoError(t, err)
-
-		lf := db.vlog.filesMap[0]
-		defer func() {
-			minHoleLen = 1 << 10
-			db.vlog.maxFid = 0
-		}()
-		// Hack way to gc last file.
-		db.vlog.maxFid = 1
-		minHoleLen = 1
-		require.NoError(t, db.vlog.rewrite(lf))
-
-		// Verify that only one non-deleted version is found
-		err = db.View(func(txn *Txn) error {
-			it := txn.NewIterator(opts)
-			var count int
-			for it.Rewind(); it.Valid(); it.Next() {
-				count++
-				item := it.Item()
-				require.Equal(t, []byte("answer"), item.Key())
-				if count == 1 {
-					val, err := item.Value()
-					require.NoError(t, err)
-					require.Equal(t, v2, val)
-				} else {
-					_, err := item.Value()
-					require.Equal(t, err, y.ErrPurged)
-				}
-			}
-			require.Equal(t, 2, count)
-			return nil
-		})
-		require.NoError(t, err)
 	})
 }
 
@@ -1690,10 +1605,4 @@ func ExampleTxn_NewIterator() {
 	fmt.Printf("Counted %d elements", count)
 	// Output:
 	// Counted 1000 elements
-}
-
-func TestMain(m *testing.M) {
-	minHoleLen = 1 << 10
-	r := m.Run()
-	os.Exit(r)
 }

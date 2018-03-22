@@ -334,8 +334,9 @@ func TestGetAfterPurge(t *testing.T) {
 		item, err := txn.Get(data(i))
 		// After purge key still remains in lsm and is not marked deleted.
 		require.NoError(t, err)
+		// File is Garbage Collected
 		_, err = item.Value()
-		require.Equal(t, err, y.ErrPurged)
+		require.Contains(t, err.Error(), "Unable to read from value log")
 	}
 
 	for i := 0; i < 10; i++ {
@@ -913,6 +914,8 @@ func TestPurgeVersionsBelow(t *testing.T) {
 		// Delete all versions below the 3rd version
 		err := db.PurgeVersionsBelow([]byte("answer"), ts)
 		require.NoError(t, err)
+		// discardStats are updated asynchronously
+		time.Sleep(time.Millisecond * 100)
 		require.NotEmpty(t, db.vlog.lfDiscardStats.m)
 
 		// Verify that there are 4 versions, and versions
@@ -924,7 +927,8 @@ func TestPurgeVersionsBelow(t *testing.T) {
 				item := it.Item()
 				if item.Version() < ts {
 					_, err := item.Value()
-					require.Equal(t, err, y.ErrPurged)
+					// Since file is not garbage collected, value would remain
+					require.NoError(t, err)
 				} else {
 					count++
 				}

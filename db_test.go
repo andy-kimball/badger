@@ -916,7 +916,9 @@ func TestPurgeVersionsBelow(t *testing.T) {
 		require.NoError(t, err)
 		// discardStats are updated asynchronously
 		time.Sleep(time.Millisecond * 100)
+		db.vlog.lfDiscardStats.Lock()
 		require.NotEmpty(t, db.vlog.lfDiscardStats.m)
+		db.vlog.lfDiscardStats.Unlock()
 
 		// Verify that there are 4 versions, and versions
 		// below ts have been purged.

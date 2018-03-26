@@ -291,7 +291,6 @@ func TestGetAfterPurge(t *testing.T) {
 	opts.ValueLogFileSize = 15 << 20
 	db, err := OpenManaged(opts)
 	require.NoError(t, err)
-	defer db.Close()
 
 	data := func(i int) []byte {
 		return []byte(fmt.Sprintf("%b", i))
@@ -321,6 +320,12 @@ func TestGetAfterPurge(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, item.Version(), uint64(79))
 	}
+
+	// Close and open so that all memtables get flushed
+	db.Close()
+	db, err = OpenManaged(opts)
+	require.NoError(t, err)
+
 	err = db.RunValueLogGC(0.2)
 	require.NoError(t, err)
 
